@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AR Graffiti — WebXR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+:root{
+  --neon:#39ff14;--hot:#ff003c;--ice:#00f0ff;--gold:#ffd600;
+  --bg:#04040a;--panel:#08081a;--border:#141428;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:#fff;font-family:'DM Mono',monospace;height:100dvh;overflow:hidden;display:flex;flex-direction:column}
+
+/* ── HEADER ── */
+header{
+  position:relative;z-index:200;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 16px;
+  background:var(--panel);
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.logo{
+  font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:5px;
+  background:linear-gradient(135deg,var(--neon) 0%,var(--ice) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+}
+.hdr-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.xr-badge{
+  font-size:8px;letter-spacing:2px;padding:3px 10px;border-radius:12px;
+  background:var(--panel);border:1px solid var(--border);color:#444;
+  transition:all .4s;
+}
+.xr-badge.active{border-color:var(--neon);color:var(--neon);box-shadow:0 0 8px var(--neon)33}
+.xr-badge.lost{border-color:var(--hot);color:var(--hot)}
+.gps-txt{font-size:8px;color:#2a2a3a}
+
+/* ── VIEWS ── */
+#views{flex:1;position:relative;overflow:hidden}
+
+/* ── AR CANVAS (Three.js renders here) ── */
+#arView{position:absolute;inset:0;display:flex;flex-direction:column}
+#threeCanvas{
+  position:absolute;inset:0;
+  width:100%!important;height:100%!important;
+  display:block;
+}
+/* 2D overlay for UI elements on top of WebXR */
+#overlay{
+  position:absolute;inset:0;
+  pointer-events:none;
+  z-index:10;
+}
+/* Reticle label */
+#reticleHint{
+  position:absolute;bottom:50%;left:50%;
+  transform:translateX(-50%) translateY(60px);
+  font-size:9px;letter-spacing:2px;color:rgba(57,255,20,.6);
+  white-space:nowrap;pointer-events:none;
+  display:none;
+}
+/* Corner deco */
+.corner{position:absolute;width:18px;height:18px;border-color:var(--neon);border-style:solid;opacity:.4}
+.corner.tl{top:10px;left:10px;border-width:2px 0 0 2px}
+.corner.tr{top:10px;right:10px;border-width:2px 2px 0 0}
+.corner.bl{bottom:10px;left:10px;border-width:0 0 2px 2px}
+.corner.br{bottom:10px;right:10px;border-width:0 2px 2px 0}
+
+/* ── START SCREEN (before WebXR session) ── */
+#startScreen{
+  position:absolute;inset:0;z-index:50;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:16px;padding:32px;
+  background:radial-gradient(ellipse at 50% 60%, #0a1a0a 0%, var(--bg) 70%);
+}
+.start-logo{
+  font-family:'Bebas Neue',sans-serif;font-size:48px;letter-spacing:8px;
+  background:linear-gradient(135deg,var(--neon),var(--ice));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  text-shadow:none;line-height:1;
+}
+.start-sub{font-size:10px;letter-spacing:3px;color:#2a4a2a;text-align:center;line-height:2}
+.req-list{
+  display:flex;flex-direction:column;gap:8px;
+  background:var(--panel);border:1px solid var(--border);
+  border-radius:8px;padding:14px 18px;width:100%;max-width:320px;
+}
+.req-item{display:flex;align-items:center;gap:10px;font-size:10px;color:#444}
+.req-dot{width:6px;height:6px;border-radius:50%;background:var(--border)}
+.req-item.ok .req-dot{background:var(--neon)}
+.req-item.ok{color:var(--neon)}
+.req-item.warn{color:var(--gold)}
+.req-item.warn .req-dot{background:var(--gold)}
+#startBtn{
+  background:var(--neon);color:#000;border:none;
+  font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:4px;
+  padding:14px 40px;border-radius:6px;cursor:pointer;
+  box-shadow:0 0 30px var(--neon)44;
+  transition:all .2s;width:100%;max-width:320px;
+}
+#startBtn:hover{box-shadow:0 0 50px var(--neon)66}
+#startBtn:disabled{background:#1a2a1a;color:#2a4a2a;box-shadow:none;cursor:not-allowed}
+.no-xr-msg{
+  font-size:10px;color:var(--hot);letter-spacing:1px;
+  text-align:center;line-height:2;display:none;
+  background:var(--panel);border:1px solid var(--hot)44;
+  border-radius:6px;padding:12px;max-width:320px;
+}
+
+/* ── TOOLBAR ── */
+#toolbar{
+  position:absolute;bottom:0;left:0;right:0;z-index:20;
+  background:rgba(8,8,26,.92);backdrop-filter:blur(8px);
+  border-top:1px solid var(--border);
+  padding:10px 12px;display:flex;align-items:center;gap:8px;
+  overflow-x:auto;scrollbar-width:none;
+}
+#toolbar::-webkit-scrollbar{display:none}
+.swatch{
+  width:28px;height:28px;border-radius:50%;cursor:pointer;
+  border:2px solid transparent;transition:transform .15s,border-color .15s,box-shadow .15s;
+  flex-shrink:0;pointer-events:all;
+}
+.swatch.active{border-color:#fff;transform:scale(1.25);box-shadow:0 0 10px currentColor}
+.tbtn{
+  background:rgba(0,0,0,.4);border:1px solid var(--border);color:#555;
+  font-family:'DM Mono',monospace;font-size:9px;padding:6px 10px;
+  border-radius:4px;cursor:pointer;white-space:nowrap;transition:all .15s;
+  flex-shrink:0;pointer-events:all;
+}
+.tbtn:hover,.tbtn.active{border-color:var(--neon);color:var(--neon)}
+.tbtn.danger:hover{border-color:var(--hot);color:var(--hot)}
+.szslider{
+  -webkit-appearance:none;appearance:none;
+  width:70px;height:3px;background:var(--border);border-radius:2px;outline:none;flex-shrink:0;
+  pointer-events:all;
+}
+.szslider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--neon);cursor:pointer}
+.sep{width:1px;height:22px;background:var(--border);flex-shrink:0}
+#saveBtn{
+  margin-left:auto;background:var(--hot);color:#fff;
+  font-family:'Bebas Neue',sans-serif;font-size:15px;letter-spacing:2px;
+  border:none;padding:7px 14px;border-radius:4px;cursor:pointer;flex-shrink:0;
+  pointer-events:all;transition:opacity .15s;
+}
+#saveBtn:active{opacity:.7}
+
+/* ── MAP VIEW ── */
+#mapView{position:absolute;inset:0;display:none;flex-direction:column}
+#map{flex:1}
+
+/* ── NAV ── */
+#nav{display:flex;border-top:1px solid var(--border);background:var(--panel);flex-shrink:0;z-index:200}
+.ntab{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:9px 0;cursor:pointer;border:none;background:none;color:#333;
+  font-family:'DM Mono',monospace;font-size:8px;gap:3px;
+  letter-spacing:1px;text-transform:uppercase;transition:color .15s;
+  border-top:2px solid transparent;
+}
+.ntab.active{color:var(--neon);border-top-color:var(--neon)}
+.nicon{font-size:16px}
+.badge{background:var(--hot);color:#fff;font-size:9px;border-radius:8px;padding:1px 6px}
+
+/* ── MODAL ── */
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;align-items:center;justify-content:center;z-index:9999;padding:20px}
+#modal.open{display:flex}
+.mbox{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:22px;width:100%;max-width:360px}
+.mtitle{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:4px;color:var(--neon);margin-bottom:14px}
+.mprev{width:100%;border-radius:6px;border:1px solid var(--border);margin-bottom:12px}
+.mlabel{font-size:9px;color:#333;margin-bottom:5px;letter-spacing:1px}
+.minput{width:100%;background:var(--bg);border:1px solid var(--border);color:#fff;font-family:'DM Mono',monospace;font-size:11px;padding:8px 10px;border-radius:4px;margin-bottom:10px}
+.minput:focus{outline:none;border-color:var(--neon)}
+.mactions{display:flex;gap:8px}
+.mcancel{flex:1;background:none;border:1px solid var(--border);color:#444;font-family:'DM Mono',monospace;font-size:10px;padding:9px;border-radius:4px;cursor:pointer}
+.mconfirm{flex:2;background:var(--hot);border:none;color:#fff;font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;padding:9px;border-radius:4px;cursor:pointer}
+
+/* ── TOAST ── */
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(16px);background:var(--neon);color:#000;font-family:'Bebas Neue',sans-serif;font-size:15px;letter-spacing:2px;padding:8px 20px;border-radius:4px;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none;white-space:nowrap;z-index:9998}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* Map popup */
+.gpopup img{width:170px;border-radius:4px;display:block;margin-bottom:6px}
+.gpopup .gtitle{font-family:'Bebas Neue',sans-serif;font-size:16px;letter-spacing:2px;color:var(--hot)}
+.gpopup .gtime{font-size:9px;color:#777;margin-top:2px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">AR GRAFFITI</div>
+  <div class="hdr-right">
+    <div class="xr-badge" id="xrBadge">⬡ WEBXR</div>
+    <div class="gps-txt" id="gpsVal">GPS: --</div>
+  </div>
+</header>
+
+<div id="views">
+
+  <!-- ══ AR VIEW ══ -->
+  <div id="arView">
+    <!-- Three.js renders onto this canvas -->
+    <canvas id="threeCanvas"></canvas>
+
+    <!-- 2D overlay (non-interactive passthrough) -->
+    <div id="overlay">
+      <div class="corner tl"></div><div class="corner tr"></div>
+      <div class="corner bl"></div><div class="corner br"></div>
+      <div id="reticleHint">👆 TAP TO PAINT</div>
+    </div>
+
+    <!-- Start screen -->
+    <div id="startScreen">
+      <div class="start-logo">AR<br>GRAFFITI</div>
+      <div class="start-sub">WEBXR HIT TEST<br>現実空間に落書きを固定する</div>
+      <div class="req-list">
+        <div class="req-item" id="reqHttps"><span class="req-dot"></span>HTTPS 接続</div>
+        <div class="req-item" id="reqXR"><span class="req-dot"></span>WebXR API</div>
+        <div class="req-item" id="reqHit"><span class="req-dot"></span>Hit Test 対応</div>
+        <div class="req-item" id="reqCam"><span class="req-dot"></span>カメラ権限</div>
+      </div>
+      <button id="startBtn" disabled onclick="startXR()">START AR</button>
+      <div class="no-xr-msg" id="noXrMsg"></div>
+    </div>
+
+    <!-- Toolbar (shown during AR session) -->
+    <div id="toolbar" style="display:none">
+      <div class="swatch active" style="background:#39ff14" data-c="#39ff14"></div>
+      <div class="swatch" style="background:#ff003c" data-c="#ff003c"></div>
+      <div class="swatch" style="background:#ffd600" data-c="#ffd600"></div>
+      <div class="swatch" style="background:#00f0ff" data-c="#00f0ff"></div>
+      <div class="swatch" style="background:#ff6d00" data-c="#ff6d00"></div>
+      <div class="swatch" style="background:#ffffff" data-c="#ffffff"></div>
+      <div class="sep"></div>
+      <input type="range" class="szslider" id="szSlider" min="1" max="5" value="2" step="0.5">
+      <div class="sep"></div>
+      <button class="tbtn active" id="penBtn">✏️ DRAW</button>
+      <button class="tbtn danger" id="clearBtn">🗑 CLEAR</button>
+      <div class="sep"></div>
+      <button id="saveBtn">📍 SAVE</button>
+    </div>
+  </div>
+
+  <!-- ══ MAP VIEW ══ -->
+  <div id="mapView"><div id="map"></div></div>
+
+</div>
+
+<div id="nav">
+  <button class="ntab active" id="tabAR" onclick="switchTab('ar')"><span class="nicon">🎨</span>AR DRAW</button>
+  <button class="ntab" id="tabMap" onclick="switchTab('map')"><span class="nicon">🗺️</span>MAP <span class="badge" id="pinBadge">0</span></button>
+</div>
+
+<div id="modal">
+  <div class="mbox">
+    <div class="mtitle">📍 PIN GRAFFITI</div>
+    <img id="prevImg" class="mprev" src="" alt="">
+    <div class="mlabel">TITLE</div>
+    <input type="text" class="minput" id="pinTitle" placeholder="例: 渋谷のネコ">
+    <div class="mlabel">LOCATION</div>
+    <input type="text" class="minput" id="pinLoc" readonly>
+    <div class="mactions">
+      <button class="mcancel" onclick="closeModal()">CANCEL</button>
+      <button class="mconfirm" onclick="confirmSave()">SAVE!</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<!-- Three.js r128 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  WebXR AR Graffiti
+//  - immersive-ar session with hit-test + dom-overlay
+//  - Three.js for 3D stroke rendering in world space
+//  - Strokes anchored to XRReferenceSpace (local-floor or local)
+// ════════════════════════════════════════════════════════════
+
+// ── State ──
+let penColor = '#39ff14';
+let brushSz  = 0.002;  // meters in 3D space
+let xrSession = null;
+let xrRefSpace = null;
+let hitTestSource = null;
+let reticleMatrix = new THREE.Matrix4();
+let reticleVisible = false;
+
+// Drawing state
+let isPainting = false;
+let currentStrokePts = [];   // {x,y,z} in world space
+let currentStrokeMesh = null;
+let allStrokes = [];         // THREE.Group objects
+
+// App state
+let userLat = 35.6812, userLng = 139.7671;
+let pins = []; try{pins=JSON.parse(localStorage.getItem('ag_xr_pins')||'[]')}catch(e){}
+let leafMap, userMarker, pendingURL;
+
+// ── Three.js setup ──
+const canvas = document.getElementById('threeCanvas');
+const renderer = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.xr.enabled = true;
+renderer.setClearColor(0x000000, 0); // transparent (camera passthrough)
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, 1, 0.01, 100);
+
+// Reticle (placement ring shown when hit-test finds a surface)
+const reticleGeo = new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI/2);
+const reticleMat = new THREE.MeshBasicMaterial({color:0x39ff14, side:THREE.DoubleSide});
+const reticle = new THREE.Mesh(reticleGeo, reticleMat);
+reticle.matrixAutoUpdate = false;
+reticle.visible = false;
+scene.add(reticle);
+
+// Pulse ring
+const pulseGeo = new THREE.RingGeometry(0.055, 0.06, 32).rotateX(-Math.PI/2);
+const pulseMat = new THREE.MeshBasicMaterial({color:0x39ff14, transparent:true, opacity:0.3, side:THREE.DoubleSide});
+const pulseRing = new THREE.Mesh(pulseGeo, pulseMat);
+pulseRing.matrixAutoUpdate = false;
+pulseRing.visible = false;
+scene.add(pulseRing);
+
+// ════════════════════════════════════════════════════════════
+//  CAPABILITY CHECK
+// ════════════════════════════════════════════════════════════
+async function checkCapabilities() {
+  const reqHttps = document.getElementById('reqHttps');
+  const reqXR    = document.getElementById('reqXR');
+  const reqHit   = document.getElementById('reqHit');
+  const reqCam   = document.getElementById('reqCam');
+  const startBtn = document.getElementById('startBtn');
+  const noXrMsg  = document.getElementById('noXrMsg');
+
+  // HTTPS
+  if (location.protocol === 'https:' || location.hostname === 'localhost') {
+    mark(reqHttps, 'ok');
+  } else {
+    mark(reqHttps, 'warn');
+  }
+
+  // WebXR API
+  if (!navigator.xr) {
+    mark(reqXR, 'fail'); mark(reqHit, 'fail');
+    showNoXR('WebXR APIが見つかりません。Android Chrome 81以上が必要です。');
+    return;
+  }
+  mark(reqXR, 'ok');
+
+  // immersive-ar + hit-test
+  const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(()=>false);
+  if (!supported) {
+    mark(reqHit, 'fail');
+    showNoXR('このデバイスはimmersive-ARに非対応です。\nAndroid + Chrome + ARCore が必要です。');
+    return;
+  }
+  mark(reqHit, 'ok');
+
+  // Camera permission (best-effort)
+  try {
+    const p = await navigator.permissions.query({name:'camera'});
+    if (p.state === 'denied') { mark(reqCam, 'fail'); }
+    else { mark(reqCam, 'ok'); }
+  } catch(e) { mark(reqCam, 'ok'); }
+
+  startBtn.disabled = false;
+
+  function mark(el, state) {
+    el.classList.remove('ok','warn');
+    if (state === 'ok')   el.classList.add('ok');
+    if (state === 'warn') el.classList.add('warn');
+    el.querySelector('.req-dot').style.background =
+      state==='ok' ? 'var(--neon)' : state==='warn' ? 'var(--gold)' : 'var(--hot)';
+    el.style.color = state==='ok' ? 'var(--neon)' : state==='warn' ? 'var(--gold)' : 'var(--hot)';
+  }
+  function showNoXR(msg) {
+    noXrMsg.style.display = 'block';
+    noXrMsg.textContent = msg;
+  }
+}
+checkCapabilities();
+
+// ════════════════════════════════════════════════════════════
+//  START WebXR SESSION
+// ════════════════════════════════════════════════════════════
+async function startXR() {
+  try {
+    xrSession = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay', 'local-floor', 'anchors'],
+      domOverlay: { root: document.getElementById('arView') }
+    });
+  } catch(e) {
+    showToast('AR セッション開始失敗: ' + e.message);
+    return;
+  }
+
+  renderer.xr.setReferenceSpaceType('local');
+  await renderer.xr.setSession(xrSession);
+
+  // Reference space
+  try {
+    xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
+  } catch(e) {
+    xrRefSpace = await xrSession.requestReferenceSpace('local');
+  }
+
+  // Hit test source (viewer space)
+  const viewerSpace = await xrSession.requestReferenceSpace('viewer');
+  hitTestSource = await xrSession.requestHitTestSource({space: viewerSpace}).catch(()=>null);
+
+  // Show UI
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('toolbar').style.display = 'flex';
+  document.getElementById('reticleHint').style.display = 'block';
+  setXRBadge('AR ACTIVE', 'active');
+
+  // Touch → paint
+  xrSession.addEventListener('select', onSelect);
+  xrSession.addEventListener('selectstart', onSelectStart);
+  xrSession.addEventListener('selectend', onSelectEnd);
+
+  xrSession.addEventListener('end', () => {
+    document.getElementById('startScreen').style.display = 'flex';
+    document.getElementById('toolbar').style.display = 'none';
+    document.getElementById('reticleHint').style.display = 'none';
+    setXRBadge('⬡ WEBXR', '');
+    hitTestSource = null; xrSession = null;
+  });
+
+  renderer.setAnimationLoop(onXRFrame);
+}
+
+// ════════════════════════════════════════════════════════════
+//  XR FRAME LOOP
+// ════════════════════════════════════════════════════════════
+let pulseT = 0;
+
+function onXRFrame(time, frame) {
+  if (!frame) return;
+
+  // Hit test
+  if (hitTestSource) {
+    const hits = frame.getHitTestResults(hitTestSource);
+    if (hits.length > 0) {
+      const pose = hits[0].getPose(xrRefSpace);
+      reticleVisible = true;
+      reticle.visible = true;
+      pulseRing.visible = true;
+      reticle.matrix.fromArray(pose.transform.matrix);
+      pulseRing.matrix.fromArray(pose.transform.matrix);
+      reticleMatrix.fromArray(pose.transform.matrix);
+      // Pulse animation
+      pulseT += 0.04;
+      const s = 1 + 0.3 * Math.sin(pulseT);
+      pulseRing.matrix.scale(new THREE.Vector3(s, 1, s));
+      pulseMat.opacity = 0.3 + 0.2 * Math.sin(pulseT);
+      document.getElementById('reticleHint').style.opacity = '1';
+    } else {
+      reticle.visible = false;
+      pulseRing.visible = false;
+      reticleVisible = false;
+      document.getElementById('reticleHint').style.opacity = '0.3';
+    }
+  }
+
+  // Extend active stroke
+  if (isPainting && reticleVisible) {
+    const pos = new THREE.Vector3().setFromMatrixPosition(reticleMatrix);
+    if (currentStrokePts.length === 0 ||
+        pos.distanceTo(currentStrokePts[currentStrokePts.length-1]) > 0.005) {
+      currentStrokePts.push(pos.clone());
+      rebuildActiveStroke();
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ════════════════════════════════════════════════════════════
+//  TOUCH EVENTS → PAINT
+// ════════════════════════════════════════════════════════════
+function onSelectStart() {
+  if (!reticleVisible) return;
+  isPainting = true;
+  currentStrokePts = [];
+  currentStrokeMesh = null;
+}
+
+function onSelectEnd() {
+  if (!isPainting) return;
+  isPainting = false;
+  if (currentStrokePts.length > 1) {
+    // Finalize stroke
+    const mesh = buildStrokeMesh(currentStrokePts, penColor, brushSz);
+    scene.add(mesh);
+    allStrokes.push(mesh);
+    currentStrokeMesh = null;
+    currentStrokePts = [];
+  }
+}
+
+function onSelect() {
+  // Tap without drag = single dot
+  if (!reticleVisible) return;
+  const pos = new THREE.Vector3().setFromMatrixPosition(reticleMatrix);
+  const dot = buildDot(pos, penColor, brushSz * 3);
+  scene.add(dot);
+  allStrokes.push(dot);
+}
+
+// ════════════════════════════════════════════════════════════
+//  3D STROKE GEOMETRY
+// ════════════════════════════════════════════════════════════
+function buildStrokeMesh(pts, color, radius) {
+  // Tube along path
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const segments = Math.max(pts.length * 3, 20);
+  const geo = new THREE.TubeGeometry(curve, segments, radius, 6, false);
+  const mat = new THREE.MeshBasicMaterial({color: new THREE.Color(color)});
+  const mesh = new THREE.Mesh(geo, mat);
+  // Emissive glow via additive sprite (simplified: just brighter color)
+  return mesh;
+}
+
+function buildDot(pos, color, radius) {
+  const geo = new THREE.SphereGeometry(radius, 8, 8);
+  const mat = new THREE.MeshBasicMaterial({color: new THREE.Color(color)});
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  return mesh;
+}
+
+function rebuildActiveStroke() {
+  if (currentStrokePts.length < 2) return;
+  if (currentStrokeMesh) scene.remove(currentStrokeMesh);
+  currentStrokeMesh = buildStrokeMesh(currentStrokePts, penColor, brushSz);
+  scene.add(currentStrokeMesh);
+}
+
+// ════════════════════════════════════════════════════════════
+//  TOOLBAR
+// ════════════════════════════════════════════════════════════
+document.querySelectorAll('.swatch').forEach(s => {
+  s.addEventListener('click', () => {
+    document.querySelectorAll('.swatch').forEach(x => x.classList.remove('active'));
+    s.classList.add('active');
+    penColor = s.dataset.c;
+  });
+});
+
+document.getElementById('szSlider').addEventListener('input', e => {
+  brushSz = parseFloat(e.target.value) * 0.001;
+});
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+  allStrokes.forEach(m => scene.remove(m));
+  allStrokes = [];
+  if (currentStrokeMesh) scene.remove(currentStrokeMesh);
+  currentStrokeMesh = null;
+  currentStrokePts = [];
+  showToast('🗑 クリア！');
+});
+
+// ════════════════════════════════════════════════════════════
+//  SAVE — screenshot composite
+// ════════════════════════════════════════════════════════════
+document.getElementById('saveBtn').addEventListener('click', () => {
+  // Render one frame to capture
+  renderer.render(scene, camera);
+  const dataURL = canvas.toDataURL('image/jpeg', 0.85);
+  pendingURL = dataURL;
+  document.getElementById('prevImg').src = dataURL;
+  document.getElementById('pinTitle').value = '';
+  document.getElementById('pinLoc').value = `${userLat.toFixed(5)}, ${userLng.toFixed(5)}`;
+  document.getElementById('modal').classList.add('open');
+});
+
+function closeModal() { document.getElementById('modal').classList.remove('open'); pendingURL = null; }
+
+function confirmSave() {
+  const title = document.getElementById('pinTitle').value.trim() || 'GRAFFITI';
+  const now = new Date();
+  const pin = {
+    id: Date.now(), lat: userLat, lng: userLng, dataURL: pendingURL, title,
+    time: now.toLocaleDateString('ja-JP') + ' ' + now.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})
+  };
+  pins.push(pin);
+  try { localStorage.setItem('ag_xr_pins', JSON.stringify(pins)); } catch(e) {}
+  updateBadge(); addPin(pin); closeModal();
+  showToast(`📍 "${title}" を保存！`);
+  switchTab('map');
+}
+
+// ════════════════════════════════════════════════════════════
+//  MAP
+// ════════════════════════════════════════════════════════════
+function initMap() {
+  if (leafMap) return;
+  leafMap = L.map('map').setView([userLat, userLng], 15);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    {attribution:'© OSM © CARTO', maxZoom:19}).addTo(leafMap);
+  const ui = L.divIcon({html:'<div style="width:12px;height:12px;background:#39ff14;border-radius:50%;border:2px solid #fff;box-shadow:0 0 8px #39ff14"></div>',className:'',iconSize:[12,12],iconAnchor:[6,6]});
+  userMarker = L.marker([userLat, userLng], {icon:ui}).addTo(leafMap).bindPopup('現在地');
+  pins.forEach(addPin);
+}
+
+function addPin(p) {
+  if (!leafMap) return;
+  const icon = L.divIcon({html:`<img src="${p.dataURL}" style="width:38px;height:38px;border-radius:6px;border:2px solid #ff003c;object-fit:cover;box-shadow:0 0 10px #ff003c80">`,className:'',iconSize:[38,38],iconAnchor:[19,19]});
+  L.marker([p.lat, p.lng], {icon}).addTo(leafMap).bindPopup(
+    `<div class="gpopup"><img src="${p.dataURL}"><div class="gtitle">${p.title}</div><div class="gtime">${p.time}</div></div>`,{maxWidth:220});
+}
+
+// ════════════════════════════════════════════════════════════
+//  HELPERS
+// ════════════════════════════════════════════════════════════
+function switchTab(t) {
+  document.getElementById('arView').style.display  = t==='ar'  ? 'block' : 'none';
+  document.getElementById('mapView').style.display = t==='map' ? 'flex'  : 'none';
+  document.getElementById('tabAR').classList.toggle('active', t==='ar');
+  document.getElementById('tabMap').classList.toggle('active', t==='map');
+  if (t==='map') {
+    initMap();
+    setTimeout(()=>{ leafMap.invalidateSize(); const l=pins[pins.length-1]; leafMap.setView(l?[l.lat,l.lng]:[userLat,userLng],16); }, 100);
+  }
+}
+
+function setXRBadge(msg, cls) {
+  const el = document.getElementById('xrBadge');
+  el.textContent = msg;
+  el.className = 'xr-badge' + (cls ? ' '+cls : '');
+}
+
+function updateBadge() { document.getElementById('pinBadge').textContent = pins.length; }
+
+let tt;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(tt); tt = setTimeout(()=>el.classList.remove('show'), 2500);
+}
+
+if (navigator.geolocation) {
+  navigator.geolocation.watchPosition(pos => {
+    userLat = pos.coords.latitude; userLng = pos.coords.longitude;
+    document.getElementById('gpsVal').textContent = `GPS: ${userLat.toFixed(4)},${userLng.toFixed(4)}`;
+    if (leafMap && userMarker) userMarker.setLatLng([userLat, userLng]);
+  }, null, {enableHighAccuracy:true});
+}
+
+// Three.js resize (non-XR preview)
+function onResize() {
+  if (xrSession) return;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+updateBadge();
+</script>
+</body>
+</html>
